@@ -10,7 +10,25 @@ CORRECTED_TEXT_FILE_NAME = "corrected_text.txt"
 EXAM_DATA_FILE_NAME = "exam_data.json"
 
 
-def build_cleanup_prompt(raw_text: str) -> str:
+def build_cleanup_prompt(raw_text: str, language: str = "en") -> str:
+    if language == "ar":
+        return f"""أنت تقوم بتنظيف نص عربي استُخرج من ورقة امتحان عبر تقنية OCR.
+
+قواعد صارمة:
+- احتفظ بالنص باللغة العربية تماماً كما هو. لا تترجم أي شيء إلى الإنجليزية أو أي لغة أخرى.
+- صحح فقط أخطاء OCR الواضحة: المسافات الزائدة، علامات الترقيم المكسورة، الأحرف المشوهة.
+- أعد تركيب الكلمات أو الجمل المكسورة بسبب أخطاء OCR فقط.
+- احتفظ بالترقيم الأصلي وخيارات الإجابة والعناوين والدرجات.
+- لا تجب على أسئلة الامتحان.
+- لا تختر من بين خيارات الإجابة.
+- لا تملأ الفراغات بالإجابة الصحيحة حتى لو كانت واضحة.
+- احتفظ بمساحات الإجابة الفارغة كـ "____".
+
+أعد النص المُصحَّح فقط بتنسيق نظيف باللغة العربية.
+
+نص OCR:
+{raw_text}
+"""
     return f"""You are cleaning OCR output from an English exam worksheet.
 
 Fix spelling, spacing, punctuation, encoding artifacts, and broken sentences.
@@ -37,7 +55,18 @@ OCR text:
 """
 
 
-def build_extraction_prompt(corrected_text: str) -> str:
+def build_extraction_prompt(corrected_text: str, language: str = "en") -> str:
+    language_value = "Arabic" if language == "ar" else "..."
+    language_rule = (
+        '- Set language to "Arabic". Do not change this value.'
+        if language == "ar"
+        else "- Identify the subject and language from the content."
+    )
+    preserve_rule = (
+        "- Keep all questions, options, and answers in Arabic exactly as they appear. Do not translate anything."
+        if language == "ar"
+        else "- Keep the blank as \"____\" in each question."
+    )
     return f"""Process the corrected OCR text and extract the exam content.
 
 Return only one valid JSON object with this exact structure:
@@ -45,7 +74,7 @@ Return only one valid JSON object with this exact structure:
   "exam_title": "...",
   "exam_type": "MCQ",
   "subject": "...",
-  "language": "...",
+  "language": "{language_value}",
   "questions": [
     {{
       "question": "...",
@@ -58,8 +87,9 @@ Return only one valid JSON object with this exact structure:
 Rules:
 - Extract the exam title from the text, usually at the top.
 - Set exam_type to "MCQ".
-- Identify the subject and language from the content.
+- {language_rule}
 - Identify each question clearly.
+- {preserve_rule}
 - Keep the blank as "____" in each question.
 - Extract all provided answer choices separately without A/B/C labels.
 - Extract the correct answer from the options using the sentence context.
@@ -151,40 +181,39 @@ def run_llama(messages: list[dict], *, json_format: bool = False) -> str:
     return response["message"]["content"]
 
 
-def create_corrected_text_from_text(raw_text: str) -> str:
+def create_corrected_text_from_text(raw_text: str, language: str = "en") -> str:
     raw_text = raw_text.strip()
     if not raw_text:
         print("OCR text is empty.")
         raise SystemExit(1)
 
+    system_msg = (
+        "أنت تنظف نص OCR عربي وتعيد النص المصحح فقط باللغة العربية."
+        if language == "ar"
+        else "You clean OCR text and return only the corrected text."
+    )
     corrected_text = run_llama(
         [
-            {
-                "role": "system",
-                "content": "You clean OCR text and return only the corrected text.",
-            },
-            {
-                "role": "user",
-                "content": build_cleanup_prompt(raw_text),
-            },
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": build_cleanup_prompt(raw_text, language)},
         ]
     )
     corrected_text = normalize_corrected_text(clean_model_output(corrected_text))
     return corrected_text
 
 
-def create_corrected_text(raw_text_path: Path, corrected_text_path: Path) -> str:
+def create_corrected_text(raw_text_path: Path, corrected_text_path: Path, language: str = "en") -> str:
     if not raw_text_path.exists():
         print(f"Could not find OCR text file: {raw_text_path}")
         raise SystemExit(1)
 
     raw_text = raw_text_path.read_text(encoding="utf-8").strip()
-    corrected_text = create_corrected_text_from_text(raw_text)
+    corrected_text = create_corrected_text_from_text(raw_text, language)
     corrected_text_path.write_text(corrected_text + "\n", encoding="utf-8")
     return corrected_text
 
 
-def create_exam_data_json(corrected_text: str) -> str:
+def create_exam_data_json(corrected_text: str, language: str = "en") -> str:
     exam_json_text = run_llama(
         [
             {
@@ -193,7 +222,7 @@ def create_exam_data_json(corrected_text: str) -> str:
             },
             {
                 "role": "user",
-                "content": build_extraction_prompt(corrected_text),
+                "content": build_extraction_prompt(corrected_text, language),
             },
         ],
         json_format=True,
@@ -209,8 +238,8 @@ def create_exam_data_json(corrected_text: str) -> str:
     return json.dumps(exam_data, ensure_ascii=False, indent=2)
 
 
-def create_exam_data(corrected_text: str, exam_data_path: Path) -> str:
-    exam_json = create_exam_data_json(corrected_text)
+def create_exam_data(corrected_text: str, exam_data_path: Path, language: str = "en") -> str:
+    exam_json = create_exam_data_json(corrected_text, language)
     exam_data_path.write_text(
         exam_json + "\n",
         encoding="utf-8",
@@ -218,20 +247,20 @@ def create_exam_data(corrected_text: str, exam_data_path: Path) -> str:
     return exam_json
 
 
-def run_llama3(raw_text: str) -> str:
-    corrected_text = create_corrected_text_from_text(raw_text)
-    return create_exam_data_json(corrected_text)
+def run_llama3(raw_text: str, language: str = "en") -> str:
+    corrected_text = create_corrected_text_from_text(raw_text, language)
+    return create_exam_data_json(corrected_text, language)
 
 
-def run_llama3_from_file(raw_text_path: Path) -> str:
+def run_llama3_from_file(raw_text_path: Path, language: str = "en") -> str:
     raw_text_path = Path(raw_text_path)
     corrected_text_path = raw_text_path.with_name(CORRECTED_TEXT_FILE_NAME)
     exam_data_path = raw_text_path.with_name(EXAM_DATA_FILE_NAME)
 
-    corrected_text = create_corrected_text(raw_text_path, corrected_text_path)
+    corrected_text = create_corrected_text(raw_text_path, corrected_text_path, language)
     print(f"Corrected text saved to: {corrected_text_path}")
 
-    exam_json = create_exam_data(corrected_text, exam_data_path)
+    exam_json = create_exam_data(corrected_text, exam_data_path, language)
     print(f"Exam data saved to: {exam_data_path}")
     return exam_json
 

@@ -58,7 +58,7 @@ def run_ocr(
 
 
 def main() -> list[Path]:
-    raise SystemExit("Run this project from app.py so it can provide the image and folder names.")
+    raise SystemExit("Run this project from app.py")
 
 
 if __name__ == "__main__":
