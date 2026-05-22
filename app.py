@@ -1,21 +1,22 @@
 from pathlib import Path
 
-from extract_ocr_text import RAW_TEXT_FILE_NAME, extract_ocr_text
-from test_llama3 import run_llama3_from_file
+from english.ocr import RAW_TEXT_FILE_NAME, extract_ocr_text
+from english.llm import run_llama3_from_file
+from arabic.llm import run_qwen3_from_file
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
 IMAGE_FOLDER_NAME = "test images"
 OUTPUT_FOLDER_NAME = "output"
-SELECTED_IMAGE_FILENAME = "image 2.png"
+SELECTED_IMAGE_FILENAME = "image 1.png"
 LANGUAGE = "ar"
 
 
 def _get_ocr_runner(language: str):
     if language == "ar":
-        from TesseractOCR import run_ocr
+        from arabic.ocr import run_ocr
     else:
-        from PaddleOCRv5 import run_ocr
+        from english.ocr import run_ocr
     return run_ocr
 
 
@@ -41,7 +42,10 @@ def main() -> None:
             raw_text_path = Path(ocr_json_path).parent / RAW_TEXT_FILE_NAME
             extract_ocr_text(ocr_json_path, raw_text_path)
 
-        run_llama3_from_file(raw_text_path, LANGUAGE)
+        if LANGUAGE == "ar":
+            run_qwen3_from_file(raw_text_path)
+        else:
+            run_llama3_from_file(raw_text_path)
 
         print("Pipeline completed successfully.")
     except Exception as exc:

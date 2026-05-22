@@ -8,4 +8,5 @@ accelerate>=0.30.0
 huggingface_hub>=0.23.0
 safetensors>=0.4.3
 torch>=2.3.0
-transformers>=4.40.0
+transformers>=4.51.0
+qwen-agent>=0.0.10

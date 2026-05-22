@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -7,7 +8,10 @@ os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
 from paddleocr import PaddleOCR
 
 
-def create_ocr() -> PaddleOCR:
+RAW_TEXT_FILE_NAME = "raw_text.txt"
+
+
+def _create_ocr() -> PaddleOCR:
     return PaddleOCR(
         use_doc_orientation_classify=False,
         use_doc_unwarping=False,
@@ -15,6 +19,24 @@ def create_ocr() -> PaddleOCR:
         device="cpu",
         enable_mkldnn=False,
     )
+
+
+def extract_ocr_text(json_path: Path, output_path: Path | None = None) -> str:
+    json_path = Path(json_path)
+    if not json_path.is_file():
+        raise FileNotFoundError(f"JSON file not found: {json_path}")
+
+    with json_path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    raw_text = "\n".join(data["rec_texts"])
+
+    output_path = output_path or json_path.parent / RAW_TEXT_FILE_NAME
+    with output_path.open("w", encoding="utf-8") as f:
+        f.write(raw_text)
+
+    print(f"Raw text saved successfully: {output_path}")
+    return raw_text
 
 
 def run_ocr(
@@ -38,7 +60,7 @@ def run_ocr(
         image_paths.append(path)
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    ocr = create_ocr()
+    ocr = _create_ocr()
     json_paths = []
 
     for image_path in image_paths:
@@ -57,7 +79,7 @@ def run_ocr(
     return json_paths
 
 
-def main() -> list[Path]:
+def main() -> None:
     raise SystemExit("Run this project from app.py")
 
 
