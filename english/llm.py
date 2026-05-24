@@ -40,55 +40,37 @@ OCR text:
 def build_extraction_prompt(corrected_text: str) -> str:
     return f"""Process the corrected OCR text and extract the exam content.
 
-Return only one valid JSON object with this exact structure:
+Return only one valid JSON object with this structure:
 {{
   "exam_title": "...",
   "subject": "...",
   "language": "...",
   "exercises": [
     {{
-      "exercise_type": "MCQ",
-      "questions": [
-        {{
-          "question": "...",
-          "correct_answer": "...",
-          "options": ["...", "...", "..."]
-        }}
-      ]
-    }},
-    {{
-      "exercise_type": "True/False",
-      "questions": [
-        {{
-          "question": "...",
-          "correct_answer": "True"
-        }}
-      ]
-    }},
-    {{
-      "exercise_type": "Fill in the blank",
-      "questions": [
-        {{
-          "question": "...",
-          "correct_answer": "..."
-        }}
-      ]
+      "exercise_type": "<type>",
+      "questions": [ ... ]
     }}
   ]
 }}
 
-Rules:
+How to determine exercise_type — use ONLY these three rules in order:
+1. "MCQ" — the question has a list of answer choices (A/B/C or numbered options). Every question with options is MCQ, even if the question itself contains a blank.
+2. "True/False" — the section is explicitly labeled "True or False", "Correct or Incorrect", or similar in the text AND the question has NO answer choices.
+3. "Fill in the blank" — the section is explicitly labeled "Fill in the blank" or similar AND the question has NO answer choices.
+
+IMPORTANT: Do NOT invent exercise types. If a question has answer choices (A/B/C), it is ALWAYS MCQ — never True/False or Fill in the blank. Only create a True/False or Fill in the blank exercise if the text has an explicit section heading saying so.
+
+Question structure by type:
+- MCQ: {{"question": "...", "correct_answer": "...", "options": ["...", "...", "..."]}}
+- True/False: {{"question": "...", "correct_answer": "True"}} or {{"question": "...", "correct_answer": "False"}}
+- Fill in the blank: {{"question": "...", "correct_answer": "..."}}
+
+Additional rules:
 - Extract the exam title from the text, usually at the top.
 - Identify the subject and language from the content.
-- Identify each question clearly and group them by exercise type.
-- exercise_type must be one of: "MCQ", "True/False", "Fill in the blank".
-- Only include exercise types that actually appear in the exam.
-- Keep the blank as "____" in each Fill in the blank question.
-- For MCQ questions: extract all provided answer choices separately without A/B/C labels, and extract the correct answer from the options using the sentence context.
-- For True/False questions: correct_answer must be "True" or "False".
-- For Fill in the blank questions: correct_answer is the word or phrase that fills the blank.
-- Return only valid JSON.
-- Do not include markdown, explanations, comments, or extra text outside JSON.
+- Keep the blank as "____" in questions.
+- For MCQ: extract answer choices without A/B/C labels. Infer the correct answer from context.
+- Return only valid JSON. No markdown, no explanations, no text outside the JSON object.
 
 Corrected OCR text:
 {corrected_text}
@@ -130,24 +112,27 @@ VALID_EXERCISE_TYPES = {"MCQ", "True/False", "Fill in the blank"}
 
 
 def validate_exam_data(exam_data: dict) -> None:
-    required_keys = {"exam_title", "subject", "language", "exercises"}
-    missing_keys = required_keys - exam_data.keys()
-    if missing_keys:
-        raise ValueError(f"Missing top-level keys: {sorted(missing_keys)}")
+    for key in ("exam_title", "subject", "language"):
+        if key not in exam_data:
+            print(f"Warning: missing '{key}' — defaulting to 'Unknown'.")
+            exam_data[key] = "Unknown"
 
-    if not isinstance(exam_data["exercises"], list) or not exam_data["exercises"]:
-        raise ValueError("exercises must be a non-empty list.")
+    if not isinstance(exam_data.get("exercises"), list):
+        print("Warning: 'exercises' missing or not a list — defaulting to empty.")
+        exam_data["exercises"] = []
+        return
 
+    valid_exercises = []
     for ex_index, exercise in enumerate(exam_data["exercises"], start=1):
         if "exercise_type" not in exercise:
-            raise ValueError(f"Exercise {ex_index} missing 'exercise_type'.")
+            print(f"Warning: skipping exercise {ex_index} — missing 'exercise_type'.")
+            continue
         if exercise["exercise_type"] not in VALID_EXERCISE_TYPES:
-            raise ValueError(
-                f"Exercise {ex_index} has invalid exercise_type '{exercise['exercise_type']}'. "
-                f"Must be one of: {sorted(VALID_EXERCISE_TYPES)}"
-            )
+            print(f"Warning: skipping exercise {ex_index} — unknown type '{exercise['exercise_type']}'.")
+            continue
         if not isinstance(exercise.get("questions"), list) or not exercise["questions"]:
-            raise ValueError(f"Exercise {ex_index} questions must be a non-empty list.")
+            print(f"Warning: skipping exercise {ex_index} — no questions.")
+            continue
 
         ex_type = exercise["exercise_type"]
         valid_questions = []
@@ -159,9 +144,18 @@ def validate_exam_data(exam_data: dict) -> None:
                 print(f"Warning: skipping exercise {ex_index}, question {q_index} — MCQ missing options.")
                 continue
             valid_questions.append(question)
+
         if not valid_questions:
-            raise ValueError(f"Exercise {ex_index} has no valid questions after filtering.")
+            print(f"Warning: skipping exercise {ex_index} — no valid questions after filtering.")
+            continue
+
         exercise["questions"] = valid_questions
+        valid_exercises.append(exercise)
+
+    if not valid_exercises:
+        print("Warning: no valid exercises found in extracted data.")
+
+    exam_data["exercises"] = valid_exercises
 
 
 def run_llama(messages: list[dict], *, json_format: bool = False) -> str:
@@ -203,6 +197,9 @@ def create_corrected_text_from_text(raw_text: str) -> str:
         ]
     )
     corrected_text = normalize_corrected_text(clean_model_output(corrected_text))
+    if not corrected_text:
+        print("Warning: cleanup model returned empty text — falling back to raw OCR text.")
+        corrected_text = normalize_corrected_text(raw_text)
     return corrected_text
 
 
@@ -218,26 +215,25 @@ def create_corrected_text(raw_text_path: Path, corrected_text_path: Path) -> str
 
 
 def create_exam_data_json(corrected_text: str) -> str:
-    exam_json_text = run_llama(
-        [
-            {
-                "role": "system",
-                "content": "You extract exam content and return only valid JSON.",
-            },
-            {
-                "role": "user",
-                "content": build_extraction_prompt(corrected_text),
-            },
-        ],
-        json_format=True,
-    )
+    messages = [
+        {"role": "system", "content": "You extract exam content and return only valid JSON."},
+        {"role": "user", "content": build_extraction_prompt(corrected_text)},
+    ]
 
-    try:
-        exam_data = parse_json_response(exam_json_text)
+    exam_data = None
+    for attempt in range(1, 3):
+        exam_json_text = run_llama(messages, json_format=True)
+        try:
+            exam_data = parse_json_response(exam_json_text)
+            break
+        except (json.JSONDecodeError, ValueError) as exc:
+            print(f"Warning: could not parse model response (attempt {attempt}/2): {exc}")
+
+    if exam_data is None:
+        print("Warning: model did not return valid JSON after 2 attempts — writing empty skeleton.")
+        exam_data = {"exam_title": "Unknown", "subject": "Unknown", "language": "Unknown", "exercises": []}
+    else:
         validate_exam_data(exam_data)
-    except (json.JSONDecodeError, ValueError) as exc:
-        print(f"Invalid JSON from model: {exc}")
-        raise SystemExit(1) from exc
 
     return json.dumps(exam_data, ensure_ascii=False, indent=2)
 

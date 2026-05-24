@@ -8,7 +8,7 @@ from arabic.llm import run_qwen3_from_file
 PROJECT_DIR = Path(__file__).resolve().parent
 IMAGE_FOLDER_NAME = "test images"
 OUTPUT_FOLDER_NAME = "output"
-SELECTED_IMAGE_FILENAME = "image 1.png"
+SELECTED_IMAGE_FILENAME = "image 4.png"
 LANGUAGE = "ar"
 
 
