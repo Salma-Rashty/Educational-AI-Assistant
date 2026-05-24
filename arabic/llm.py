@@ -49,27 +49,51 @@ def build_extraction_prompt(corrected_text: str) -> str:
 Return only one valid JSON object with this exact structure:
 {{
   "exam_title": "...",
-  "exam_type": "MCQ",
   "subject": "...",
   "language": "Arabic",
-  "questions": [
+  "exercises": [
     {{
-      "question": "...",
-      "correct_answer": "...",
-      "options": ["...", "...", "..."]
+      "exercise_type": "MCQ",
+      "questions": [
+        {{
+          "question": "...",
+          "correct_answer": "...",
+          "options": ["...", "...", "..."]
+        }}
+      ]
+    }},
+    {{
+      "exercise_type": "True/False",
+      "questions": [
+        {{
+          "question": "...",
+          "correct_answer": "صح"
+        }}
+      ]
+    }},
+    {{
+      "exercise_type": "Fill in the blank",
+      "questions": [
+        {{
+          "question": "...",
+          "correct_answer": "..."
+        }}
+      ]
     }}
   ]
 }}
 
 Rules:
 - Extract the exam title from the text, usually at the top.
-- Set exam_type to "MCQ".
 - Set language to "Arabic". Do not change this value.
-- Identify each question clearly.
+- Identify each question clearly and group them by exercise type.
+- exercise_type must be one of: "MCQ", "True/False", "Fill in the blank".
+- Only include exercise types that actually appear in the exam.
 - Keep all questions, options, and answers in Arabic exactly as they appear. Do not translate anything.
-- Keep the blank as "____" in each question.
-- Extract all provided answer choices separately without A/B/C labels.
-- Extract the correct answer from the options using the sentence context.
+- Keep the blank as "____" in each Fill in the blank question.
+- For MCQ questions: extract all provided answer choices separately without A/B/C labels, and extract the correct answer from the options using the sentence context.
+- For True/False questions: correct_answer must be "صح" or "خطأ".
+- For Fill in the blank questions: correct_answer is the word or phrase that fills the blank.
 - Return only valid JSON.
 - Do not include markdown, explanations, comments, or extra text outside JSON.
 
@@ -108,27 +132,42 @@ def parse_json_response(text: str) -> dict:
     return json.loads(cleaned[start : end + 1])
 
 
+VALID_EXERCISE_TYPES = {"MCQ", "True/False", "Fill in the blank"}
+
+
 def validate_exam_data(exam_data: dict) -> None:
-    required_keys = {"exam_title", "exam_type", "subject", "language", "questions"}
+    required_keys = {"exam_title", "subject", "language", "exercises"}
     missing_keys = required_keys - exam_data.keys()
     if missing_keys:
         raise ValueError(f"Missing top-level keys: {sorted(missing_keys)}")
 
-    if exam_data["exam_type"] != "MCQ":
-        raise ValueError('exam_type must be "MCQ".')
+    if not isinstance(exam_data["exercises"], list) or not exam_data["exercises"]:
+        raise ValueError("exercises must be a non-empty list.")
 
-    if not isinstance(exam_data["questions"], list) or not exam_data["questions"]:
-        raise ValueError("questions must be a non-empty list.")
-
-    question_keys = {"question", "correct_answer", "options"}
-    for index, question in enumerate(exam_data["questions"], start=1):
-        missing_question_keys = question_keys - question.keys()
-        if missing_question_keys:
+    for ex_index, exercise in enumerate(exam_data["exercises"], start=1):
+        if "exercise_type" not in exercise:
+            raise ValueError(f"Exercise {ex_index} missing 'exercise_type'.")
+        if exercise["exercise_type"] not in VALID_EXERCISE_TYPES:
             raise ValueError(
-                f"Question {index} missing keys: {sorted(missing_question_keys)}"
+                f"Exercise {ex_index} has invalid exercise_type '{exercise['exercise_type']}'. "
+                f"Must be one of: {sorted(VALID_EXERCISE_TYPES)}"
             )
-        if not isinstance(question["options"], list) or not question["options"]:
-            raise ValueError(f"Question {index} options must be a non-empty list.")
+        if not isinstance(exercise.get("questions"), list) or not exercise["questions"]:
+            raise ValueError(f"Exercise {ex_index} questions must be a non-empty list.")
+
+        ex_type = exercise["exercise_type"]
+        valid_questions = []
+        for q_index, question in enumerate(exercise["questions"], start=1):
+            if "question" not in question or "correct_answer" not in question:
+                print(f"Warning: skipping exercise {ex_index}, question {q_index} — missing 'question' or 'correct_answer'.")
+                continue
+            if ex_type == "MCQ" and (not isinstance(question.get("options"), list) or not question["options"]):
+                print(f"Warning: skipping exercise {ex_index}, question {q_index} — MCQ missing options.")
+                continue
+            valid_questions.append(question)
+        if not valid_questions:
+            raise ValueError(f"Exercise {ex_index} has no valid questions after filtering.")
+        exercise["questions"] = valid_questions
 
 
 def run_qwen3(messages: list[dict], *, json_format: bool = False) -> str:

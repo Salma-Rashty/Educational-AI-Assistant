@@ -39,6 +39,8 @@ def _preprocess_image(image: Image.Image) -> Image.Image:
 
 
 def _clean_line(text: str) -> str:
+    # Strip Unicode bidirectional control characters injected by Tesseract (e.g. U+200F RLM)
+    text = re.sub(r'[\u200E\u200F\u202A-\u202E\u2066-\u2069؜]', '', text)
     text = re.sub(r'[\d]+[\s\d]*[\d]+', '..........', text)
     text = re.sub(r'[a-zA-Z]{1,3}[\s\d]+[a-zA-Z\d]+', '..........', text)
     text = re.sub(r' +', ' ', text)
